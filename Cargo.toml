@@ -1,5 +1,6 @@
 [package]
 name = "test_package"
+edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
@@ -9,3 +10,4 @@ serde_json = "1.0.149"
 dotenv = "0.15.0"
 chrono = "0.4.44"
 uuid = "1.23.1"
+tokio = { version = "1", features = ["full"] }

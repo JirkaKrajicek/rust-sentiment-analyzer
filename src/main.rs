@@ -1,20 +1,20 @@
-// use std::process::Command;
-// use std::{env, fs, path::PathBuf};
+use axum::{Json, Router, response::IntoResponse, routing::get};
+use serde_json::json;
 
-fn main() {
-    println!("Hello, world!");
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let app = Router::new().route("/api", get(api_handler));
 
-    let point = Point::new(1, 2);   
-    point.sum(3);
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
+    axum::serve(listener, app).await?;
 
-    let cappuccino = Cappuccino::default();
-    // Result<FlatWhite, String>
-    let flat_white = match FlatWhite::try_from(cappuccino) {
-        Some(coffee) => coffee,
-        None
-    }
+    Ok(())
+}
 
-    if let Some(coffee) = match FlatWhite::try_from(cappuccino) {
-        println!("Error converting Cappuccino to FlatWhite: {}", err);
-    }
+async fn api_handler() -> impl IntoResponse {
+    let json_response = json!({
+        "status": "success",
+        "message": "Hello, World!"
+    });
+    Json(json_response)
 }
