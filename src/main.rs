@@ -1,5 +1,5 @@
-use axum::{Json, Router, response::IntoResponse, routing::get};
-use serde_json::json;
+use axum::{Router, routing::get};
+use sentiment_analyzer::adapter::inbound::rest::handler::api_handler;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -9,12 +9,4 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
-}
-
-async fn api_handler() -> impl IntoResponse {
-    let json_response = json!({
-        "status": "success",
-        "message": "Hello, World!"
-    });
-    Json(json_response)
 }
