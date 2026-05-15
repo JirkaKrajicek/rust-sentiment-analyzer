@@ -12,3 +12,16 @@ chrono = "0.4.44"
 uuid = "1.23.1"
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
+diesel = { version = "2.3.3", features = [
+    "postgres",
+    "chrono",
+    "serde_json",
+    "uuid",
+    "numeric",
+] }
+diesel_async = { package = "diesel-async", version = "0.7.4", features = [
+    "postgres",
+    "deadpool",
+] }
+diesel_migrations = { version = "2", features = ["postgres"] }
+diesel-derive-enum = { version = "2.1", features = ["postgres"] }
