@@ -5,17 +5,17 @@ use crate::{
     domain::sentiment::{Sentiment, SentimentType},
 };
 
-use super::postgres_store::PostgresStore;
+pub struct StubRepository;
 
 #[async_trait::async_trait]
-impl ProjectRepository for PostgresStore {
+impl ProjectRepository for StubRepository {
     async fn insert(&self, _prompt: String) -> Result<(), anyhow::Error> {
         Ok(())
     }
 
-    async fn get_sentiment(&self, _prompt_id: Uuid) -> Result<Sentiment, anyhow::Error> {
+    async fn get_sentiment(&self, prompt_id: Uuid) -> Result<Sentiment, anyhow::Error> {
         Ok(Sentiment {
-            prompt_id: _prompt_id,
+            prompt_id,
             sentiment: SentimentType::Neutral,
             probability: 0.0,
         })

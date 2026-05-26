@@ -25,3 +25,10 @@ diesel_async = { package = "diesel-async", version = "0.7.4", features = [
 ] }
 diesel_migrations = { version = "2", features = ["postgres"] }
 diesel-derive-enum = { version = "2.1", features = ["postgres"] }
+ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
+tokenizers = "0.23.1"
+ndarray = "0.16"
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
