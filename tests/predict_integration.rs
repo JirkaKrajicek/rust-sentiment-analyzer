@@ -1,129 +1,118 @@
-// use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
-// use axum::{Router, body::Body, routing::post};
-// use http::{Request, StatusCode};
-// use http_body_util::BodyExt;
-// use serde_json::{Value, json};
-// use tower::ServiceExt;
+use axum::{
+    Router,
+    body::Body,
+    http::{Request, StatusCode},
+    routing::{get, post},
+};
+use http_body_util::BodyExt;
+use serde_json::{Value, json};
+use tower::ServiceExt;
 
-// use sentiment_analyzer::{
-//     adapter::{
-//         inbound::rest::handler::predict_handler,
-//         outbound::{
-//             onnx::onnx_analyzer::OnnxAnalyzer,
-//             stub::{sentiment_analyzer::StubAnalyzer, stub_repository::StubRepository},
-//         },
-//     },
-//     app_state::AppState,
-//     application::{
-//         port::sentiment_analyzer::SentimentAnalyzer, service::sentiment_service::SentimentService,
-//     },
-//     domain::sentiment::SentimentType,
-// };
+use sentiment_analyzer::{
+    adapter::{
+        inbound::rest::handler::{
+            delete_sentiment_handler, get_sentiment_handler, list_sentiments_handler,
+            predict_handler,
+        },
+        outbound::stub::{sentiment_analyzer::StubAnalyzer, stub_repository::StubRepository},
+    },
+    app_state::AppState,
+    application::service::sentiment_service::SentimentService,
+};
 
-// fn build_app(analyzer: Arc<dyn SentimentAnalyzer>) -> Router {
-//     let repo = Arc::new(StubRepository);
-//     let service = Arc::new(SentimentService::new(analyzer, repo));
-//     let state = AppState { service };
-//     Router::new()
-//         .route("/predict", post(predict_handler))
-//         .with_state(state)
-// }
+fn build_app() -> Router {
+    let analyzer = Arc::new(StubAnalyzer);
+    let repository = Arc::new(StubRepository::default());
+    let service = Arc::new(SentimentService::new(analyzer, repository));
+    let state = AppState { service };
 
-// async fn post_predict(app: Router, text: &str) -> (StatusCode, Value) {
-//     let body = json!({ "text": text });
-//     let request = Request::builder()
-//         .method("POST")
-//         .uri("/predict")
-//         .header("content-type", "application/json")
-//         .body(Body::from(body.to_string()))
-//         .unwrap();
-//     let response = app.oneshot(request).await.unwrap();
-//     let status = response.status();
-//     let bytes = response.into_body().collect().await.unwrap().to_bytes();
-//     let json: Value = serde_json::from_slice(&bytes).unwrap();
-//     (status, json)
-// }
+    Router::new()
+        .route("/predict", post(predict_handler))
+        .route("/sentiments", get(list_sentiments_handler))
+        .route(
+            "/sentiments/{id}",
+            get(get_sentiment_handler).delete(delete_sentiment_handler),
+        )
+        .with_state(state)
+}
 
-// /// Tests 1 & 2 use the real OnnxAnalyzer and require models/ to be present.
-// /// `flavor = "multi_thread"` is required because `block_in_place` is used inside the analyzer.
+async fn request(app: Router, method: &str, uri: &str, body: Body) -> (StatusCode, Value) {
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(body)
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap()
+    };
+    (status, json)
+}
 
-// #[tokio::test(flavor = "multi_thread")]
-// async fn positive_text_returns_positive() {
-//     let analyzer: Arc<dyn SentimentAnalyzer> = Arc::new(
-//         OnnxAnalyzer::new(
-//             Path::new("models/model.onnx"),
-//             Path::new("models/tokenizer.json"),
-//         )
-//         .expect("Failed to load OnnxAnalyzer"),
-//     );
-//     let app = build_app(analyzer);
+#[tokio::test]
+async fn predict_persists_and_returns_a_result_id() {
+    let (status, response) = request(
+        build_app(),
+        "POST",
+        "/predict",
+        Body::from(json!({ "text": "A very good day" }).to_string()),
+    )
+    .await;
 
-//     let (status, json) = post_predict(app, "I absolutely love this, it is fantastic!").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(response["sentiment"], "Positive");
+    assert_eq!(response["probability"], 0.99);
+    assert!(response["id"].as_str().is_some());
+}
 
-//     assert_eq!(status, StatusCode::OK);
-//     assert_eq!(json["sentiment"], "Positive");
-//     assert!(json["probability"].as_f64().unwrap() > 0.55);
-// }
+#[tokio::test]
+async fn prediction_can_be_listed_retrieved_and_deleted() {
+    let app = build_app();
+    let (_, created) = request(
+        app.clone(),
+        "POST",
+        "/predict",
+        Body::from(json!({ "text": "Remember this result" }).to_string()),
+    )
+    .await;
+    let id = created["id"].as_str().unwrap();
 
-// #[tokio::test(flavor = "multi_thread")]
-// async fn negative_text_returns_negative() {
-//     let analyzer: Arc<dyn SentimentAnalyzer> = Arc::new(
-//         OnnxAnalyzer::new(
-//             Path::new("models/model.onnx"),
-//             Path::new("models/tokenizer.json"),
-//         )
-//         .expect("Failed to load OnnxAnalyzer"),
-//     );
-//     let app = build_app(analyzer);
+    let (list_status, list) = request(app.clone(), "GET", "/sentiments", Body::empty()).await;
+    assert_eq!(list_status, StatusCode::OK);
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list[0]["id"], id);
 
-//     let (status, json) = post_predict(
-//         app,
-//         "This is absolutely terrible, I hate everything about it.",
-//     )
-//     .await;
+    let (get_status, retrieved) = request(
+        app.clone(),
+        "GET",
+        &format!("/sentiments/{id}"),
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(get_status, StatusCode::OK);
+    assert_eq!(retrieved["id"], id);
 
-//     assert_eq!(status, StatusCode::OK);
-//     assert_eq!(json["sentiment"], "Negative");
-//     assert!(json["probability"].as_f64().unwrap() > 0.55);
-// }
+    let (delete_status, _) = request(
+        app.clone(),
+        "DELETE",
+        &format!("/sentiments/{id}"),
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(delete_status, StatusCode::NO_CONTENT);
 
-// /// Test 3 uses an inline stub to reliably exercise the Neutral path
-// /// without depending on model output probabilities.
-// struct NeutralStub;
-
-// #[async_trait::async_trait]
-// impl SentimentAnalyzer for NeutralStub {
-//     async fn analyze(&self, _text: &str) -> Result<(SentimentType, f64), anyhow::Error> {
-//         Ok((SentimentType::Neutral, 0.5))
-//     }
-// }
-
-// #[tokio::test]
-// async fn neutral_sentiment_returns_neutral() {
-//     let analyzer: Arc<dyn SentimentAnalyzer> = Arc::new(NeutralStub);
-//     let app = build_app(analyzer);
-
-//     let (status, json) = post_predict(app, "It was a thing that existed.").await;
-
-//     assert_eq!(status, StatusCode::OK);
-//     assert_eq!(json["sentiment"], "Neutral");
-//     assert!((json["probability"].as_f64().unwrap() - 0.5).abs() < f64::EPSILON);
-// }
-
-// /// Sanity check: missing request body returns 422 Unprocessable Entity.
-// #[tokio::test]
-// async fn missing_body_returns_422() {
-//     let analyzer: Arc<dyn SentimentAnalyzer> = Arc::new(StubAnalyzer);
-//     let app = build_app(analyzer);
-
-//     let request = Request::builder()
-//         .method("POST")
-//         .uri("/predict")
-//         .header("content-type", "application/json")
-//         .body(Body::empty())
-//         .unwrap();
-//     let response = app.oneshot(request).await.unwrap();
-
-//     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-// }
+    let (missing_status, _) =
+        request(app, "GET", &format!("/sentiments/{id}"), Body::empty()).await;
+    assert_eq!(missing_status, StatusCode::NOT_FOUND);
+}

@@ -22,6 +22,7 @@ diesel = { version = "2.3.3", features = [
 diesel_async = { package = "diesel-async", version = "0.7.4", features = [
     "postgres",
     "deadpool",
+    "migrations",
 ] }
 diesel_migrations = { version = "2", features = ["postgres"] }
 diesel-derive-enum = { version = "2.1", features = ["postgres"] }
