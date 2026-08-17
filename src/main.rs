@@ -9,7 +9,10 @@ use sentiment_analyzer::{
     app_state::AppState,
     application::service::sentiment_service::SentimentService,
     config::DbConfig,
+    openapi::ApiDoc,
 };
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -24,6 +27,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/predict", post(predict_handler))
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;

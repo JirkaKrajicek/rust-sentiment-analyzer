@@ -25,9 +25,12 @@ diesel_async = { package = "diesel-async", version = "0.7.4", features = [
 ] }
 diesel_migrations = { version = "2", features = ["postgres"] }
 diesel-derive-enum = { version = "2.1", features = ["postgres"] }
-ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
+ort = { version = "2.0.0-rc.12", features = ["download-binaries", "ndarray"] }
 tokenizers = "0.23.1"
-ndarray = "0.16"
+ndarray = "0.17"
+# OpenAPI / Swagger
+utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
 
 [dev-dependencies]
 http-body-util = "0.1"

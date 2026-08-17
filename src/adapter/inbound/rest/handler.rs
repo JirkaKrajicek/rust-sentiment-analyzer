@@ -5,6 +5,16 @@ use crate::{
     app_state::AppState,
 };
 
+#[utoipa::path(
+    post,
+    path = "/predict",
+    request_body = PredictRequest,
+    responses(
+        (status = 200, description = "Sentiment prediction result", body = PredictResponse),
+        (status = 500, description = "Internal server error"),
+    ),
+    tag = "sentiment"
+)]
 pub async fn predict_handler(
     State(state): State<AppState>,
     Json(body): Json<PredictRequest>,

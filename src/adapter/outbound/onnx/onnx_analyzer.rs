@@ -2,15 +2,18 @@ use std::path::Path;
 
 use anyhow::Context;
 use ndarray::Array2;
-use ort::{Session, inputs};
+use ort::inputs;
+use ort::session::Session;
+use ort::value::TensorRef;
 use tokenizers::Tokenizer;
+use tokio::sync::Mutex;
 
 use crate::{
     application::port::sentiment_analyzer::SentimentAnalyzer, domain::sentiment::SentimentType,
 };
 
 pub struct OnnxAnalyzer {
-    session: Session,
+    session: Mutex<Session>,
     tokenizer: Tokenizer,
 }
 
@@ -21,7 +24,10 @@ impl OnnxAnalyzer {
             .context("Failed to load ONNX model")?;
         let tokenizer = Tokenizer::from_file(tokenizer_path)
             .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {e}"))?;
-        Ok(Self { session, tokenizer })
+        Ok(Self {
+            session: Mutex::new(session),
+            tokenizer,
+        })
     }
 }
 
@@ -47,13 +53,13 @@ impl SentimentAnalyzer for OnnxAnalyzer {
             .context("Failed to build attention_mask tensor")?;
 
         let (neg, pos) = tokio::task::block_in_place(|| -> anyhow::Result<(f32, f32)> {
-            let outputs = self.session.run(inputs![
-                "input_ids" => input_ids_array.view(),
-                "attention_mask" => attention_mask_array.view(),
-            ]?)?;
-            let logits = outputs["logits"].try_extract_tensor::<f32>()?;
-            let view = logits.view();
-            Ok((view[[0, 0]], view[[0, 1]]))
+            let mut session = self.session.blocking_lock();
+            let outputs = session.run(inputs![
+                "input_ids" => TensorRef::<i64>::from_array_view(&input_ids_array)?,
+                "attention_mask" => TensorRef::<i64>::from_array_view(&attention_mask_array)?,
+            ])?;
+            let (_, logits) = outputs["logits"].try_extract_tensor::<f32>()?;
+            Ok((logits[0], logits[1]))
         })?;
 
         // Numerically stable softmax over [neg, pos]
