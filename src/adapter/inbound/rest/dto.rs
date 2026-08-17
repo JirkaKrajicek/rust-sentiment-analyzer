@@ -12,7 +12,7 @@ pub struct PredictRequest {
 pub struct PredictResponse {
     /// Identifier of the persisted prediction
     pub id: Uuid,
-    /// Predicted sentiment label (Positive, Negative, Neutral)
+    /// Predicted sentiment label (Positive or Negative)
     pub sentiment: String,
     /// Confidence probability of the prediction
     pub probability: f64,

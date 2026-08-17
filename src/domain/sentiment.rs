@@ -1,13 +1,12 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, diesel_derive_enum::DbEnum)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, diesel_derive_enum::DbEnum)]
 #[ExistingTypePath = "crate::schema::sql_types::SentimentType"]
 #[DbValueStyle = "PascalCase"]
 pub enum SentimentType {
     Positive,
     Negative,
-    Neutral,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

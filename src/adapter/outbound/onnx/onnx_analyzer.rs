@@ -68,14 +68,31 @@ impl SentimentAnalyzer for OnnxAnalyzer {
         let exp_pos = (pos - max).exp();
         let prob_pos = (exp_pos / (exp_neg + exp_pos)) as f64;
 
-        let (sentiment, probability) = if prob_pos > 0.6 {
-            (SentimentType::Positive, prob_pos)
-        } else if prob_pos >= 0.4 && prob_pos <= 0.6 {
-            (SentimentType::Neutral, prob_pos)
-        } else {
-            (SentimentType::Negative, 1.0 - prob_pos)
-        };
+        Ok(classify_probability(prob_pos))
+    }
+}
 
-        Ok((sentiment, probability))
+fn classify_probability(prob_pos: f64) -> (SentimentType, f64) {
+    if prob_pos >= 0.5 {
+        (SentimentType::Positive, prob_pos)
+    } else {
+        (SentimentType::Negative, 1.0 - prob_pos)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_probability;
+    use crate::domain::sentiment::SentimentType;
+
+    #[test]
+    fn classifies_positive_probability_including_a_tie() {
+        assert_eq!(classify_probability(0.5), (SentimentType::Positive, 0.5));
+        assert_eq!(classify_probability(0.9), (SentimentType::Positive, 0.9));
+    }
+
+    #[test]
+    fn classifies_negative_probability_as_negative_confidence() {
+        assert_eq!(classify_probability(0.49), (SentimentType::Negative, 0.51));
     }
 }
