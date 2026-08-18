@@ -1,10 +1,11 @@
+use anyhow::Context;
 use diesel::{ExpressionMethods, OptionalExtension, QueryDsl, SelectableHelper};
 use diesel_async::RunQueryDsl;
 use uuid::Uuid;
 
 use crate::{
     application::port::project_repository::ProjectRepository,
-    domain::sentiment::{Sentiment, SentimentType},
+    domain::sentiment::{DocumentDetails, Sentiment, SentimentType},
     schema::sentiment_results,
 };
 
@@ -18,6 +19,7 @@ struct SentimentRow {
     sentiment: SentimentType,
     probability: f64,
     created_at: chrono::DateTime<chrono::Utc>,
+    document_details: Option<serde_json::Value>,
 }
 
 #[derive(diesel::Insertable)]
@@ -26,16 +28,25 @@ struct NewSentimentRow<'a> {
     input_text: &'a str,
     sentiment: SentimentType,
     probability: f64,
+    document_details: Option<serde_json::Value>,
 }
 
-impl From<SentimentRow> for Sentiment {
-    fn from(row: SentimentRow) -> Self {
+impl TryFrom<SentimentRow> for Sentiment {
+    type Error = anyhow::Error;
+
+    fn try_from(row: SentimentRow) -> Result<Self, Self::Error> {
         let _ = (row.input_text, row.created_at);
-        Self {
+        let document_details = row
+            .document_details
+            .map(serde_json::from_value)
+            .transpose()
+            .context("stored document details are invalid")?;
+        Ok(Self {
             prompt_id: row.id,
             sentiment: row.sentiment,
             probability: row.probability,
-        }
+            document_details,
+        })
     }
 }
 
@@ -52,13 +63,36 @@ impl ProjectRepository for PostgresStore {
             input_text,
             sentiment,
             probability,
+            document_details: None,
         };
         let inserted = diesel::insert_into(sentiment_results::table)
             .values(&row)
             .returning(SentimentRow::as_returning())
             .get_result(&mut connection)
             .await?;
-        Ok(inserted.into())
+        inserted.try_into()
+    }
+
+    async fn insert_document(
+        &self,
+        input_text: &str,
+        sentiment: SentimentType,
+        probability: f64,
+        details: DocumentDetails,
+    ) -> Result<Sentiment, anyhow::Error> {
+        let mut connection = self.conn().await?;
+        let row = NewSentimentRow {
+            input_text,
+            sentiment,
+            probability,
+            document_details: Some(serde_json::to_value(details)?),
+        };
+        let inserted = diesel::insert_into(sentiment_results::table)
+            .values(&row)
+            .returning(SentimentRow::as_returning())
+            .get_result(&mut connection)
+            .await?;
+        inserted.try_into()
     }
 
     async fn get_sentiment(&self, prompt_id: Uuid) -> Result<Option<Sentiment>, anyhow::Error> {
@@ -69,7 +103,7 @@ impl ProjectRepository for PostgresStore {
             .first(&mut connection)
             .await
             .optional()?;
-        Ok(row.map(Into::into))
+        row.map(TryInto::try_into).transpose()
     }
 
     async fn delete(&self, prompt_id: Uuid) -> Result<bool, anyhow::Error> {
@@ -87,6 +121,6 @@ impl ProjectRepository for PostgresStore {
             .select(SentimentRow::as_select())
             .load(&mut connection)
             .await?;
-        Ok(rows.into_iter().map(Into::into).collect())
+        rows.into_iter().map(TryInto::try_into).collect()
     }
 }

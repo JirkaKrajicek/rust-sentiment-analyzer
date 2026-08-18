@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{
     application::port::project_repository::ProjectRepository,
-    domain::sentiment::{Sentiment, SentimentType},
+    domain::sentiment::{DocumentDetails, Sentiment, SentimentType},
 };
 
 #[derive(Default)]
@@ -24,7 +24,24 @@ impl ProjectRepository for StubRepository {
             prompt_id: Uuid::new_v4(),
             sentiment,
             probability,
+            document_details: None,
         };
+        self.results
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Stub repository lock was poisoned"))?
+            .insert(result.prompt_id, result.clone());
+        Ok(result)
+    }
+
+    async fn insert_document(
+        &self,
+        input_text: &str,
+        sentiment: SentimentType,
+        probability: f64,
+        details: DocumentDetails,
+    ) -> Result<Sentiment, anyhow::Error> {
+        let mut result = self.insert(input_text, sentiment, probability).await?;
+        result.document_details = Some(details);
         self.results
             .lock()
             .map_err(|_| anyhow::anyhow!("Stub repository lock was poisoned"))?

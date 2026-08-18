@@ -6,7 +6,9 @@ use crate::{
     application::port::{
         project_repository::ProjectRepository, sentiment_analyzer::SentimentAnalyzer,
     },
-    domain::sentiment::{ChunkSentiment, DocumentSentiment, Sentiment, SentimentType},
+    domain::sentiment::{
+        ChunkSentiment, DocumentDetails, DocumentSentiment, Sentiment, SentimentType,
+    },
 };
 
 pub struct SentimentService {
@@ -51,7 +53,14 @@ impl SentimentService {
         } else {
             (SentimentType::Negative, -score)
         };
-        let result = self.repo.insert(&text, sentiment, probability).await?;
+        let details = DocumentDetails {
+            aggregation: "mean_signed_confidence".to_string(),
+            chunks: results.clone(),
+        };
+        let result = self
+            .repo
+            .insert_document(&text, sentiment, probability, details)
+            .await?;
         Ok(DocumentSentiment {
             result,
             aggregation: "mean_signed_confidence",

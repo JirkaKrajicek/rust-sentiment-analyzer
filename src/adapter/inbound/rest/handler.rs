@@ -9,8 +9,8 @@ use uuid::Uuid;
 use crate::{
     adapter::inbound::rest::{
         dto::{
-            DocumentChunkResponse, DocumentPredictResponse, ErrorResponse, HealthResponse,
-            PredictRequest, PredictResponse, ReadinessResponse,
+            DocumentChunkResponse, DocumentDetailsResponse, DocumentPredictResponse, ErrorResponse,
+            HealthResponse, PredictRequest, PredictResponse, ReadinessResponse,
         },
         request_context::RequestId,
     },
@@ -287,6 +287,20 @@ fn to_response(sentiment: crate::domain::sentiment::Sentiment) -> PredictRespons
         id: sentiment.prompt_id,
         sentiment: format!("{:?}", sentiment.sentiment),
         probability: sentiment.probability,
+        document_details: sentiment
+            .document_details
+            .map(|details| DocumentDetailsResponse {
+                aggregation: details.aggregation,
+                chunks: details
+                    .chunks
+                    .into_iter()
+                    .map(|chunk| DocumentChunkResponse {
+                        index: chunk.index,
+                        sentiment: format!("{:?}", chunk.sentiment),
+                        probability: chunk.probability,
+                    })
+                    .collect(),
+            }),
     }
 }
 

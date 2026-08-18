@@ -28,6 +28,7 @@ use sentiment_analyzer::{
     application::{
         port::sentiment_analyzer::SentimentAnalyzer, service::sentiment_service::SentimentService,
     },
+    domain::sentiment::SentimentType,
 };
 
 fn build_app() -> Router {
@@ -39,17 +40,29 @@ fn build_app_with_predict_body_limit(limit: usize) -> Router {
 }
 
 fn build_app_with_analyzer(analyzer: Arc<dyn SentimentAnalyzer>, limit: usize) -> Router {
+    build_app_with_limits(analyzer, limit, 1_000_000)
+}
+
+fn build_app_with_document_character_limit(limit: usize) -> Router {
+    build_app_with_limits(Arc::new(StubAnalyzer), 64 * 1024, limit)
+}
+
+fn build_app_with_limits(
+    analyzer: Arc<dyn SentimentAnalyzer>,
+    predict_limit: usize,
+    document_max_characters: usize,
+) -> Router {
     let repository = Arc::new(StubRepository::default());
     let service = Arc::new(SentimentService::new(analyzer, repository));
     let state = AppState {
         service,
-        document_max_characters: 1_000_000,
+        document_max_characters,
     };
 
     Router::new()
         .route(
             "/predict",
-            post(predict_handler).layer(DefaultBodyLimit::max(limit)),
+            post(predict_handler).layer(DefaultBodyLimit::max(predict_limit)),
         )
         .route(
             "/predict/document",
@@ -64,6 +77,27 @@ fn build_app_with_analyzer(analyzer: Arc<dyn SentimentAnalyzer>, limit: usize) -
         )
         .with_state(state)
         .layer(middleware::from_fn(request_context))
+}
+
+struct ChunkingAnalyzer;
+
+#[async_trait::async_trait]
+impl SentimentAnalyzer for ChunkingAnalyzer {
+    async fn analyze(&self, text: &str) -> Result<(SentimentType, f64), anyhow::Error> {
+        if text == "negative" {
+            Ok((SentimentType::Negative, 0.8))
+        } else {
+            Ok((SentimentType::Positive, 0.9))
+        }
+    }
+
+    fn chunk_text(&self, _text: &str) -> Result<Vec<String>, anyhow::Error> {
+        Ok(vec!["positive".to_string(), "negative".to_string()])
+    }
+
+    async fn is_ready(&self) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
 }
 
 async fn multipart_file(app: Router, file_name: &str, content: &[u8]) -> (StatusCode, Value) {
@@ -87,7 +121,10 @@ async fn multipart_file(app: Router, file_name: &str, content: &[u8]) -> (Status
         .unwrap();
     let status = response.status();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    (status, serde_json::from_slice(&bytes).unwrap())
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 #[tokio::test]
@@ -125,6 +162,83 @@ async fn document_prediction_rejects_legacy_word_documents() {
     let (status, response) = multipart_file(build_app(), "old.doc", b"legacy binary").await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(response["code"], "invalid_document");
+}
+
+#[tokio::test]
+async fn document_prediction_rejects_malformed_docx() {
+    let (status, response) = multipart_file(build_app(), "broken.docx", b"PK not a ZIP").await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response["code"], "invalid_document");
+}
+
+#[tokio::test]
+async fn document_prediction_rejects_a_body_larger_than_its_route_limit() {
+    let oversized_document = vec![b'x'; 2_000];
+    let (status, _) = multipart_file(build_app(), "large.txt", &oversized_document).await;
+
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn document_prediction_rejects_non_utf8_text() {
+    let (status, response) = multipart_file(build_app(), "broken.txt", &[0xff, 0xfe]).await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response["code"], "invalid_document");
+}
+
+#[tokio::test]
+async fn document_prediction_rejects_text_larger_than_the_extracted_text_limit() {
+    let (status, response) = multipart_file(
+        build_app_with_document_character_limit(5),
+        "long.txt",
+        b"six chars",
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response["code"], "invalid_document");
+}
+
+#[tokio::test]
+async fn document_prediction_returns_each_chunk_and_aggregates_their_scores() {
+    let app = build_app_with_analyzer(Arc::new(ChunkingAnalyzer), 64 * 1024);
+    let (status, response) = multipart_file(app, "document.txt", b"any text").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(response["aggregation"], "mean_signed_confidence");
+    assert_eq!(response["sentiment"], "Positive");
+    assert_eq!(response["chunks"].as_array().unwrap().len(), 2);
+    assert_eq!(response["chunks"][1]["sentiment"], "Negative");
+}
+
+#[tokio::test]
+async fn document_prediction_details_are_available_after_retrieval() {
+    let app = build_app_with_analyzer(Arc::new(ChunkingAnalyzer), 64 * 1024);
+    let (status, created) = multipart_file(app.clone(), "document.txt", b"any text").await;
+    assert_eq!(status, StatusCode::OK);
+    let id = created["id"].as_str().unwrap();
+
+    let (status, retrieved) =
+        request(app, "GET", &format!("/sentiments/{id}"), Body::empty()).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        retrieved["document_details"]["aggregation"],
+        "mean_signed_confidence"
+    );
+    assert_eq!(
+        retrieved["document_details"]["chunks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        retrieved["document_details"]["chunks"][1]["sentiment"],
+        "Negative"
+    );
 }
 
 #[tokio::test]

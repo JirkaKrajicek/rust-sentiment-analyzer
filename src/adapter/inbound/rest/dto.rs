@@ -16,6 +16,8 @@ pub struct PredictResponse {
     pub sentiment: String,
     /// Confidence probability of the prediction
     pub probability: f64,
+    /// Present only for results created from a document upload.
+    pub document_details: Option<DocumentDetailsResponse>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -40,6 +42,12 @@ pub struct DocumentPredictResponse {
     pub id: Uuid,
     pub sentiment: String,
     pub probability: f64,
+    pub aggregation: String,
+    pub chunks: Vec<DocumentChunkResponse>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DocumentDetailsResponse {
     pub aggregation: String,
     pub chunks: Vec<DocumentChunkResponse>,
 }

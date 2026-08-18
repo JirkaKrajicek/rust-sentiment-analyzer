@@ -1,4 +1,4 @@
-use domain::sentiment::{Sentiment, SentimentType};
+use domain::sentiment::{DocumentDetails, Sentiment, SentimentType};
 use uuid::Uuid;
 
 use crate::domain;
@@ -10,6 +10,13 @@ pub trait ProjectRepository: Send + Sync {
         input_text: &str,
         sentiment: SentimentType,
         probability: f64,
+    ) -> Result<Sentiment, anyhow::Error>;
+    async fn insert_document(
+        &self,
+        input_text: &str,
+        sentiment: SentimentType,
+        probability: f64,
+        details: DocumentDetails,
     ) -> Result<Sentiment, anyhow::Error>;
     async fn get_sentiment(&self, prompt_id: Uuid) -> Result<Option<Sentiment>, anyhow::Error>;
     async fn delete(&self, prompt_id: Uuid) -> Result<bool, anyhow::Error>;

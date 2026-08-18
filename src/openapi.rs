@@ -1,8 +1,8 @@
 use utoipa::OpenApi;
 
 use crate::adapter::inbound::rest::dto::{
-    DocumentChunkResponse, DocumentPredictResponse, ErrorResponse, HealthResponse, PredictRequest,
-    PredictResponse, ReadinessResponse,
+    DocumentChunkResponse, DocumentDetailsResponse, DocumentPredictResponse, ErrorResponse,
+    HealthResponse, PredictRequest, PredictResponse, ReadinessResponse,
 };
 
 #[derive(OpenApi)]
@@ -16,7 +16,7 @@ use crate::adapter::inbound::rest::dto::{
         crate::adapter::inbound::rest::handler::get_sentiment_handler,
         crate::adapter::inbound::rest::handler::delete_sentiment_handler
     ),
-    components(schemas(PredictRequest, PredictResponse, ReadinessResponse, HealthResponse, ErrorResponse, DocumentPredictResponse, DocumentChunkResponse)),
+    components(schemas(PredictRequest, PredictResponse, ReadinessResponse, HealthResponse, ErrorResponse, DocumentPredictResponse, DocumentDetailsResponse, DocumentChunkResponse)),
     tags((name = "sentiment", description = "Sentiment analysis endpoints")),
     info(
         title = "Sentiment Analyzer API",

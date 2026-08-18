@@ -14,13 +14,20 @@ pub struct Sentiment {
     pub prompt_id: Uuid,
     pub sentiment: SentimentType,
     pub probability: f64,
+    pub document_details: Option<DocumentDetails>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkSentiment {
     pub index: usize,
     pub sentiment: SentimentType,
     pub probability: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentDetails {
+    pub aggregation: String,
+    pub chunks: Vec<ChunkSentiment>,
 }
 
 #[derive(Debug, Clone, Serialize)]

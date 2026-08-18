@@ -16,5 +16,6 @@ diesel::table! {
         sentiment -> SentimentType,
         probability -> Float8,
         created_at -> Timestamptz,
+        document_details -> Nullable<Jsonb>,
     }
 }
