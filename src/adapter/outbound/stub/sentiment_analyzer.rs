@@ -10,6 +10,10 @@ impl SentimentAnalyzer for StubAnalyzer {
         Ok((SentimentType::Positive, 0.99))
     }
 
+    fn chunk_text(&self, text: &str) -> Result<Vec<String>, anyhow::Error> {
+        Ok(vec![text.to_string()])
+    }
+
     async fn is_ready(&self) -> Result<(), anyhow::Error> {
         Ok(())
     }

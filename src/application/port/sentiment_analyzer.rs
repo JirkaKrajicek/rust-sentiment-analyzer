@@ -22,5 +22,6 @@ impl std::error::Error for InferenceError {}
 #[async_trait::async_trait]
 pub trait SentimentAnalyzer: Send + Sync {
     async fn analyze(&self, text: &str) -> Result<(SentimentType, f64), anyhow::Error>;
+    fn chunk_text(&self, text: &str) -> Result<Vec<String>, anyhow::Error>;
     async fn is_ready(&self) -> Result<(), anyhow::Error>;
 }

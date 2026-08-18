@@ -5,7 +5,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0"
 serde = "1.0.228"
-axum = "0.8.9"
+axum = { version = "0.8.9", features = ["multipart"] }
 serde_json = "1.0.149"
 dotenv = "0.15.0"
 chrono = "0.4.44"
@@ -29,6 +29,7 @@ diesel-derive-enum = { version = "2.1", features = ["postgres"] }
 ort = { version = "2.0.0-rc.12", features = ["download-binaries", "ndarray"] }
 tokenizers = "0.23.1"
 ndarray = "0.17"
+zip = "3.0"
 # OpenAPI / Swagger
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-swagger-ui = { version = "9", features = ["axum"] }

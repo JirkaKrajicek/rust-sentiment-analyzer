@@ -15,3 +15,17 @@ pub struct Sentiment {
     pub sentiment: SentimentType,
     pub probability: f64,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChunkSentiment {
+    pub index: usize,
+    pub sentiment: SentimentType,
+    pub probability: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DocumentSentiment {
+    pub result: Sentiment,
+    pub aggregation: &'static str,
+    pub chunks: Vec<ChunkSentiment>,
+}

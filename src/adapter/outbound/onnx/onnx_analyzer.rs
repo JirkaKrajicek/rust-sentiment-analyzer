@@ -110,6 +110,29 @@ impl SentimentAnalyzer for OnnxAnalyzer {
         Ok(classify_probability(prob_pos))
     }
 
+    fn chunk_text(&self, text: &str) -> Result<Vec<String>, anyhow::Error> {
+        let mut remaining = text.trim();
+        let mut chunks = Vec::new();
+        while !remaining.is_empty() {
+            let encoding = self
+                .tokenizer
+                .encode(remaining, true)
+                .map_err(|error| anyhow::anyhow!("Document tokenization failed: {error}"))?;
+            let end = encoding
+                .get_offsets()
+                .iter()
+                .map(|&(_, end)| end)
+                .max()
+                .unwrap_or(0);
+            if end == 0 {
+                anyhow::bail!("Document tokenization did not advance");
+            }
+            chunks.push(remaining[..end].trim().to_string());
+            remaining = remaining[end..].trim_start();
+        }
+        Ok(chunks)
+    }
+
     async fn is_ready(&self) -> Result<(), anyhow::Error> {
         if self.session.is_poisoned() {
             anyhow::bail!("Inference session lock was poisoned");

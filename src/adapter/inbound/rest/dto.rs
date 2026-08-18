@@ -34,3 +34,19 @@ pub struct ErrorResponse {
     pub message: &'static str,
     pub request_id: String,
 }
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DocumentPredictResponse {
+    pub id: Uuid,
+    pub sentiment: String,
+    pub probability: f64,
+    pub aggregation: String,
+    pub chunks: Vec<DocumentChunkResponse>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DocumentChunkResponse {
+    pub index: usize,
+    pub sentiment: String,
+    pub probability: f64,
+}
