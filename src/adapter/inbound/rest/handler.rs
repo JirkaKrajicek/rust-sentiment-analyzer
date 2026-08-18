@@ -10,8 +10,9 @@ use uuid::Uuid;
 use crate::{
     adapter::inbound::rest::{
         dto::{
-            DocumentChunkResponse, DocumentDetailsResponse, DocumentPredictResponse, ErrorResponse,
-            HealthResponse, PredictRequest, PredictResponse, ReadinessResponse,
+            DocumentChunkResponse, DocumentDetailsResponse, DocumentPredictResponse,
+            DocumentUploadRequest, ErrorResponse, HealthResponse, PredictRequest, PredictResponse,
+            ReadinessResponse,
         },
         request_context::RequestId,
     },
@@ -57,7 +58,7 @@ pub async fn predict_handler(
 #[utoipa::path(
     post,
     path = "/predict/document",
-    request_body(content = String, content_type = "multipart/form-data"),
+    request_body(content = inline(DocumentUploadRequest), content_type = "multipart/form-data"),
     responses((status = 200, body = DocumentPredictResponse), (status = 413, body = ErrorResponse), (status = 422, body = ErrorResponse), (status = 500, body = ErrorResponse)),
     tag = "sentiment"
 )]

@@ -8,6 +8,13 @@ pub struct PredictRequest {
     pub text: String,
 }
 
+#[derive(Debug, ToSchema)]
+pub struct DocumentUploadRequest {
+    /// A UTF-8 `.txt` or `.docx` file to analyze.
+    #[schema(value_type = String, format = Binary)]
+    pub file: Vec<u8>,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PredictResponse {
     /// Identifier of the persisted prediction

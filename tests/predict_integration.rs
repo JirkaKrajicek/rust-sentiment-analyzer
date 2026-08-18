@@ -16,6 +16,7 @@ use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
 use tower::ServiceExt;
+use utoipa::OpenApi;
 
 use sentiment_analyzer::{
     adapter::{
@@ -31,6 +32,7 @@ use sentiment_analyzer::{
         port::sentiment_analyzer::SentimentAnalyzer, service::sentiment_service::SentimentService,
     },
     domain::sentiment::SentimentType,
+    openapi::ApiDoc,
 };
 
 fn build_app() -> Router {
@@ -160,6 +162,16 @@ async fn document_prediction_accepts_utf8_text() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(response["sentiment"], "Positive");
     assert_eq!(response["chunks"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn openapi_describes_document_upload_as_a_binary_file() {
+    let openapi = serde_json::to_value(ApiDoc::openapi()).unwrap();
+    let schema = &openapi["paths"]["/predict/document"]["post"]["requestBody"]["content"]["multipart/form-data"]
+        ["schema"];
+
+    assert_eq!(schema["properties"]["file"]["type"], "string");
+    assert_eq!(schema["properties"]["file"]["format"], "binary");
 }
 
 #[tokio::test]
