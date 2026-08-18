@@ -202,9 +202,10 @@ async fn document_prediction_rejects_malformed_docx() {
 #[tokio::test]
 async fn document_prediction_rejects_a_body_larger_than_its_route_limit() {
     let oversized_document = vec![b'x'; 2_000];
-    let (status, _) = multipart_file(build_app(), "large.txt", &oversized_document).await;
+    let (status, response) = multipart_file(build_app(), "large.txt", &oversized_document).await;
 
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(response["code"], "payload_too_large");
 }
 
 #[tokio::test]
@@ -307,6 +308,23 @@ async fn health_reports_the_process_as_healthy() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(response["status"], "healthy");
+}
+
+#[tokio::test]
+async fn successful_requests_keep_the_client_request_id() {
+    let response = build_app()
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .header("x-request-id", "client-request-id")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["x-request-id"], "client-request-id");
 }
 
 #[tokio::test]

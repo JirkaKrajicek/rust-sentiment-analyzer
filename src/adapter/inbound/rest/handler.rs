@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{Extension, Multipart, Path, State},
+    extract::{Extension, Multipart, Path, State, multipart::MultipartError},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -51,7 +51,6 @@ pub async fn predict_handler(
         .predict(body.text)
         .await
         .map_err(|error| predict_error(error, request_id.clone()))?;
-
     Ok(Json(to_response(sentiment)))
 }
 
@@ -59,7 +58,7 @@ pub async fn predict_handler(
     post,
     path = "/predict/document",
     request_body(content = String, content_type = "multipart/form-data"),
-    responses((status = 200, body = DocumentPredictResponse), (status = 422, body = ErrorResponse), (status = 500, body = ErrorResponse)),
+    responses((status = 200, body = DocumentPredictResponse), (status = 413, body = ErrorResponse), (status = 422, body = ErrorResponse), (status = 500, body = ErrorResponse)),
     tag = "sentiment"
 )]
 pub async fn predict_document_handler(
@@ -70,7 +69,7 @@ pub async fn predict_document_handler(
     let field = multipart
         .next_field()
         .await
-        .map_err(|error| ApiError::internal(error.into(), request_id.clone()))?
+        .map_err(|error| multipart_error(error, request_id.clone()))?
         .ok_or_else(|| {
             ApiError::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -91,7 +90,7 @@ pub async fn predict_document_handler(
     let bytes = field
         .bytes()
         .await
-        .map_err(|error| ApiError::internal(error.into(), request_id.clone()))?;
+        .map_err(|error| multipart_error(error, request_id.clone()))?;
     let permit = timeout(
         state.document_extraction_queue_timeout,
         state.document_extraction.clone().acquire_owned(),
@@ -350,5 +349,18 @@ fn predict_error(error: anyhow::Error, request_id: RequestId) -> ApiError {
             request_id,
         ),
         _ => ApiError::internal(error, request_id),
+    }
+}
+
+fn multipart_error(error: MultipartError, request_id: RequestId) -> ApiError {
+    if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        ApiError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "payload_too_large",
+            "Request payload exceeds the configured limit",
+            request_id,
+        )
+    } else {
+        ApiError::internal(error.into(), request_id)
     }
 }
