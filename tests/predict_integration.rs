@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    io::{Cursor, Write},
+    sync::Arc,
+};
 
 use axum::{
     Router,
@@ -96,6 +99,28 @@ async fn document_prediction_accepts_utf8_text() {
 }
 
 #[tokio::test]
+async fn document_prediction_extracts_text_from_docx() {
+    let cursor = Cursor::new(Vec::new());
+    let mut archive = zip::ZipWriter::new(cursor);
+    archive
+        .start_file(
+            "word/document.xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+    archive
+        .write_all(b"<w:document><w:body><w:p><w:r><w:t>Hello from DOCX</w:t></w:r></w:p></w:body></w:document>")
+        .unwrap();
+    let document = archive.finish().unwrap().into_inner();
+
+    let (status, response) = multipart_file(build_app(), "note.docx", &document).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(response["sentiment"], "Positive");
+    assert_eq!(response["chunks"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn document_prediction_rejects_legacy_word_documents() {
     let (status, response) = multipart_file(build_app(), "old.doc", b"legacy binary").await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
@@ -160,11 +185,7 @@ async fn request(app: Router, method: &str, uri: &str, body: Body) -> (StatusCod
         .unwrap();
     let status = response.status();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    let json = if bytes.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes).unwrap()
-    };
+    let json = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     (status, json)
 }
 
