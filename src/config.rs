@@ -5,6 +5,7 @@ pub struct AppConfig {
     pub inference: InferenceConfig,
     pub model: ModelConfig,
     pub server: ServerConfig,
+    pub retention: RetentionConfig,
 }
 
 pub struct DbConfig {
@@ -35,6 +36,10 @@ pub struct ServerConfig {
     pub bind_address: SocketAddr,
 }
 
+pub struct RetentionConfig {
+    pub result_retention_days: u32,
+}
+
 impl AppConfig {
     pub fn from_env() -> anyhow::Result<Self> {
         Ok(Self {
@@ -42,6 +47,7 @@ impl AppConfig {
             inference: InferenceConfig::from_env()?,
             model: ModelConfig::from_env()?,
             server: ServerConfig::from_env()?,
+            retention: RetentionConfig::from_env()?,
         })
     }
 }
@@ -121,6 +127,14 @@ impl ServerConfig {
     }
 }
 
+impl RetentionConfig {
+    fn from_env() -> anyhow::Result<Self> {
+        Ok(Self {
+            result_retention_days: positive_u32_env("SENTIMENT_RESULT_RETENTION_DAYS", 30)?,
+        })
+    }
+}
+
 fn required_env(name: &str) -> anyhow::Result<String> {
     std::env::var(name).map_err(|_| anyhow::anyhow!("{name} must be set"))
 }
@@ -136,6 +150,11 @@ fn non_empty_env_or(name: &str, default: &str) -> anyhow::Result<String> {
 fn positive_usize_env(name: &str, default: usize) -> anyhow::Result<usize> {
     let value = positive_env(name, default as u64)?;
     usize::try_from(value).map_err(|_| anyhow::anyhow!("{name} is too large"))
+}
+
+fn positive_u32_env(name: &str, default: u32) -> anyhow::Result<u32> {
+    let value = positive_env(name, u64::from(default))?;
+    u32::try_from(value).map_err(|_| anyhow::anyhow!("{name} is too large"))
 }
 
 fn positive_env(name: &str, default: u64) -> anyhow::Result<u64> {

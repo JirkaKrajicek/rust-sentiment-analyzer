@@ -16,6 +16,7 @@ use sentiment_analyzer::{
         outbound::{onnx::onnx_analyzer::OnnxAnalyzer, postgres::postgres_store::PostgresStore},
     },
     app_state::AppState,
+    application::port::project_repository::ProjectRepository,
     application::service::sentiment_service::SentimentService,
     config::AppConfig,
     openapi::ApiDoc,
@@ -31,6 +32,8 @@ async fn main() -> anyhow::Result<()> {
     if config.database.run_migrations() {
         repo.run_migrations().await?;
     }
+    remove_expired_results(&repo, config.retention.result_retention_days).await?;
+    spawn_retention_job(repo.clone(), config.retention.result_retention_days);
     let analyzer = Arc::new(OnnxAnalyzer::new(
         &config.model.model_path,
         &config.model.tokenizer_path,
@@ -77,4 +80,26 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+async fn remove_expired_results(repo: &PostgresStore, retention_days: u32) -> anyhow::Result<()> {
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(i64::from(retention_days));
+    let deleted = repo.delete_created_before(cutoff).await?;
+    if deleted > 0 {
+        eprintln!("level=info event=expired_sentiments_deleted count={deleted}");
+    }
+    Ok(())
+}
+
+fn spawn_retention_job(repo: Arc<PostgresStore>, retention_days: u32) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            if let Err(error) = remove_expired_results(&repo, retention_days).await {
+                eprintln!("level=error event=expired_sentiments_cleanup_failed error={error}");
+            }
+        }
+    });
 }

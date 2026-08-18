@@ -67,6 +67,13 @@ impl ProjectRepository for StubRepository {
             .is_some())
     }
 
+    async fn delete_created_before(
+        &self,
+        _cutoff: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, anyhow::Error> {
+        Ok(0)
+    }
+
     async fn list(&self) -> Result<Vec<Sentiment>, anyhow::Error> {
         Ok(self
             .results

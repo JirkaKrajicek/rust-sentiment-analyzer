@@ -114,6 +114,19 @@ impl ProjectRepository for PostgresStore {
         Ok(affected > 0)
     }
 
+    async fn delete_created_before(
+        &self,
+        cutoff: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, anyhow::Error> {
+        let mut connection = self.conn().await?;
+        let affected = diesel::delete(
+            sentiment_results::table.filter(sentiment_results::created_at.lt(cutoff)),
+        )
+        .execute(&mut connection)
+        .await?;
+        Ok(affected as u64)
+    }
+
     async fn list(&self) -> Result<Vec<Sentiment>, anyhow::Error> {
         let mut connection = self.conn().await?;
         let rows = sentiment_results::table
