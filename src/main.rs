@@ -42,6 +42,11 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState {
         service,
         document_max_characters: config.inference.document_max_characters,
+        document_extraction: Arc::new(tokio::sync::Semaphore::new(
+            config.inference.document_extraction_concurrency,
+        )),
+        document_extraction_queue_timeout: config.inference.document_extraction_queue_timeout,
+        document_extraction_timeout: config.inference.document_extraction_timeout,
     };
 
     let app = Router::new()

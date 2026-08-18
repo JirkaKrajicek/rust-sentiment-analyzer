@@ -21,6 +21,9 @@ pub struct InferenceConfig {
     pub execution_timeout: Duration,
     pub document_max_body_bytes: usize,
     pub document_max_characters: usize,
+    pub document_extraction_concurrency: usize,
+    pub document_extraction_queue_timeout: Duration,
+    pub document_extraction_timeout: Duration,
 }
 
 pub struct ModelConfig {
@@ -80,6 +83,18 @@ impl InferenceConfig {
                 10 * 1024 * 1024,
             )?,
             document_max_characters: positive_usize_env("DOCUMENT_MAX_CHARACTERS", 1_000_000)?,
+            document_extraction_concurrency: positive_usize_env(
+                "DOCUMENT_EXTRACTION_CONCURRENCY",
+                1,
+            )?,
+            document_extraction_queue_timeout: Duration::from_millis(positive_env(
+                "DOCUMENT_EXTRACTION_QUEUE_TIMEOUT_MS",
+                1_000,
+            )?),
+            document_extraction_timeout: Duration::from_millis(positive_env(
+                "DOCUMENT_EXTRACTION_TIMEOUT_MS",
+                10_000,
+            )?),
         })
     }
 }

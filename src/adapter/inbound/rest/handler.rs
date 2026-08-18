@@ -4,6 +4,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use tokio::time::timeout;
 use uuid::Uuid;
 
 use crate::{
@@ -91,19 +92,49 @@ pub async fn predict_document_handler(
         .bytes()
         .await
         .map_err(|error| ApiError::internal(error.into(), request_id.clone()))?;
-    let text = crate::adapter::inbound::rest::document::extract_text(
-        &file_name,
-        &bytes,
-        state.document_max_characters,
+    let permit = timeout(
+        state.document_extraction_queue_timeout,
+        state.document_extraction.clone().acquire_owned(),
     )
+    .await
     .map_err(|_| {
         ApiError::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "invalid_document",
-            "The document could not be processed",
+            StatusCode::TOO_MANY_REQUESTS,
+            "document_extraction_overloaded",
+            "Document extraction capacity is unavailable",
+            request_id.clone(),
+        )
+    })?
+    .map_err(|_| {
+        ApiError::internal(
+            anyhow::anyhow!("document extraction is unavailable"),
             request_id.clone(),
         )
     })?;
+    let max_characters = state.document_max_characters;
+    let extraction = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        crate::adapter::inbound::rest::document::extract_text(&file_name, &bytes, max_characters)
+    });
+    let text = timeout(state.document_extraction_timeout, extraction)
+        .await
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::GATEWAY_TIMEOUT,
+                "document_extraction_timed_out",
+                "Document extraction timed out",
+                request_id.clone(),
+            )
+        })?
+        .map_err(|error| ApiError::internal(error.into(), request_id.clone()))?
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_document",
+                "The document could not be processed",
+                request_id.clone(),
+            )
+        })?;
     let document = state
         .service
         .predict_document(text)

@@ -1,6 +1,7 @@
 use std::{
     io::{Cursor, Write},
     sync::Arc,
+    time::Duration,
 };
 
 use axum::{
@@ -13,6 +14,7 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
+use tokio::sync::Semaphore;
 use tower::ServiceExt;
 
 use sentiment_analyzer::{
@@ -52,14 +54,37 @@ fn build_app_with_limits(
     predict_limit: usize,
     document_max_characters: usize,
 ) -> Router {
+    build_app_with_extraction_control(
+        analyzer,
+        predict_limit,
+        document_max_characters,
+        1,
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+    )
+    .0
+}
+
+fn build_app_with_extraction_control(
+    analyzer: Arc<dyn SentimentAnalyzer>,
+    predict_limit: usize,
+    document_max_characters: usize,
+    extraction_concurrency: usize,
+    extraction_queue_timeout: Duration,
+    extraction_timeout: Duration,
+) -> (Router, Arc<Semaphore>) {
     let repository = Arc::new(StubRepository::default());
     let service = Arc::new(SentimentService::new(analyzer, repository));
+    let document_extraction = Arc::new(Semaphore::new(extraction_concurrency));
     let state = AppState {
         service,
         document_max_characters,
+        document_extraction: document_extraction.clone(),
+        document_extraction_queue_timeout: extraction_queue_timeout,
+        document_extraction_timeout: extraction_timeout,
     };
 
-    Router::new()
+    let app = Router::new()
         .route(
             "/predict",
             post(predict_handler).layer(DefaultBodyLimit::max(predict_limit)),
@@ -76,7 +101,9 @@ fn build_app_with_limits(
             get(get_sentiment_handler).delete(delete_sentiment_handler),
         )
         .with_state(state)
-        .layer(middleware::from_fn(request_context))
+        .layer(middleware::from_fn(request_context));
+
+    (app, document_extraction)
 }
 
 struct ChunkingAnalyzer;
@@ -199,6 +226,24 @@ async fn document_prediction_rejects_text_larger_than_the_extracted_text_limit()
 
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(response["code"], "invalid_document");
+}
+
+#[tokio::test]
+async fn document_prediction_rejects_when_extraction_capacity_is_full() {
+    let (app, extraction) = build_app_with_extraction_control(
+        Arc::new(StubAnalyzer),
+        64 * 1024,
+        1_000_000,
+        1,
+        Duration::from_millis(5),
+        Duration::from_secs(1),
+    );
+    let _permit = extraction.acquire_owned().await.unwrap();
+
+    let (status, response) = multipart_file(app, "note.txt", b"A short document").await;
+
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(response["code"], "document_extraction_overloaded");
 }
 
 #[tokio::test]
