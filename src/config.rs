@@ -19,6 +19,8 @@ pub struct InferenceConfig {
     pub max_tokens: usize,
     pub queue_timeout: Duration,
     pub execution_timeout: Duration,
+    pub document_max_body_bytes: usize,
+    pub document_max_characters: usize,
 }
 
 pub struct ModelConfig {
@@ -73,6 +75,11 @@ impl InferenceConfig {
                 1_000,
             )?),
             execution_timeout: Duration::from_millis(positive_env("INFERENCE_TIMEOUT_MS", 10_000)?),
+            document_max_body_bytes: positive_usize_env(
+                "DOCUMENT_MAX_BODY_BYTES",
+                10 * 1024 * 1024,
+            )?,
+            document_max_characters: positive_usize_env("DOCUMENT_MAX_CHARACTERS", 1_000_000)?,
         })
     }
 }

@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{Extension, Path, State},
+    extract::{Extension, Multipart, Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -8,7 +8,10 @@ use uuid::Uuid;
 
 use crate::{
     adapter::inbound::rest::{
-        dto::{ErrorResponse, HealthResponse, PredictRequest, PredictResponse, ReadinessResponse},
+        dto::{
+            DocumentChunkResponse, DocumentPredictResponse, ErrorResponse, HealthResponse,
+            PredictRequest, PredictResponse, ReadinessResponse,
+        },
         request_context::RequestId,
     },
     app_state::AppState,
@@ -49,6 +52,78 @@ pub async fn predict_handler(
         .map_err(|error| predict_error(error, request_id.clone()))?;
 
     Ok(Json(to_response(sentiment)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/predict/document",
+    request_body(content = String, content_type = "multipart/form-data"),
+    responses((status = 200, body = DocumentPredictResponse), (status = 422, body = ErrorResponse), (status = 500, body = ErrorResponse)),
+    tag = "sentiment"
+)]
+pub async fn predict_document_handler(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    mut multipart: Multipart,
+) -> Result<Json<DocumentPredictResponse>, ApiError> {
+    let field = multipart
+        .next_field()
+        .await
+        .map_err(|error| ApiError::internal(error.into(), request_id.clone()))?
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "missing_file",
+                "A file field is required",
+                request_id.clone(),
+            )
+        })?;
+    if field.name() != Some("file") {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "missing_file",
+            "A file field is required",
+            request_id,
+        ));
+    }
+    let file_name = field.file_name().unwrap_or_default().to_owned();
+    let bytes = field
+        .bytes()
+        .await
+        .map_err(|error| ApiError::internal(error.into(), request_id.clone()))?;
+    let text = crate::adapter::inbound::rest::document::extract_text(
+        &file_name,
+        &bytes,
+        state.document_max_characters,
+    )
+    .map_err(|_| {
+        ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_document",
+            "The document could not be processed",
+            request_id.clone(),
+        )
+    })?;
+    let document = state
+        .service
+        .predict_document(text)
+        .await
+        .map_err(|error| predict_error(error, request_id))?;
+    Ok(Json(DocumentPredictResponse {
+        id: document.result.prompt_id,
+        sentiment: format!("{:?}", document.result.sentiment),
+        probability: document.result.probability,
+        aggregation: document.aggregation.to_string(),
+        chunks: document
+            .chunks
+            .into_iter()
+            .map(|chunk| DocumentChunkResponse {
+                index: chunk.index,
+                sentiment: format!("{:?}", chunk.sentiment),
+                probability: chunk.probability,
+            })
+            .collect(),
+    }))
 }
 
 #[utoipa::path(

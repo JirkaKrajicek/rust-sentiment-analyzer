@@ -5,4 +5,5 @@ use crate::application::service::sentiment_service::SentimentService;
 #[derive(Clone)]
 pub struct AppState {
     pub service: Arc<SentimentService>,
+    pub document_max_characters: usize,
 }

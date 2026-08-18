@@ -10,7 +10,7 @@ use sentiment_analyzer::{
     adapter::{
         inbound::rest::handler::{
             delete_sentiment_handler, get_sentiment_handler, health_handler,
-            list_sentiments_handler, predict_handler, readiness_handler,
+            list_sentiments_handler, predict_document_handler, predict_handler, readiness_handler,
         },
         inbound::rest::request_context::request_context,
         outbound::{onnx::onnx_analyzer::OnnxAnalyzer, postgres::postgres_store::PostgresStore},
@@ -39,13 +39,22 @@ async fn main() -> anyhow::Result<()> {
         config.inference.execution_timeout,
     )?);
     let service = Arc::new(SentimentService::new(analyzer, repo));
-    let state = AppState { service };
+    let state = AppState {
+        service,
+        document_max_characters: config.inference.document_max_characters,
+    };
 
     let app = Router::new()
         .route(
             "/predict",
             post(predict_handler).layer(DefaultBodyLimit::max(
                 config.inference.predict_max_body_bytes,
+            )),
+        )
+        .route(
+            "/predict/document",
+            post(predict_document_handler).layer(DefaultBodyLimit::max(
+                config.inference.document_max_body_bytes,
             )),
         )
         .route("/health", get(health_handler))

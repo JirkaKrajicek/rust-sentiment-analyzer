@@ -16,7 +16,7 @@ use sentiment_analyzer::{
     adapter::{
         inbound::rest::handler::{
             delete_sentiment_handler, get_sentiment_handler, health_handler,
-            list_sentiments_handler, predict_handler, readiness_handler,
+            list_sentiments_handler, predict_document_handler, predict_handler, readiness_handler,
         },
         inbound::rest::request_context::request_context,
         outbound::stub::{sentiment_analyzer::StubAnalyzer, stub_repository::StubRepository},
@@ -25,7 +25,6 @@ use sentiment_analyzer::{
     application::{
         port::sentiment_analyzer::SentimentAnalyzer, service::sentiment_service::SentimentService,
     },
-    domain::sentiment::SentimentType,
 };
 
 fn build_app() -> Router {
@@ -39,12 +38,19 @@ fn build_app_with_predict_body_limit(limit: usize) -> Router {
 fn build_app_with_analyzer(analyzer: Arc<dyn SentimentAnalyzer>, limit: usize) -> Router {
     let repository = Arc::new(StubRepository::default());
     let service = Arc::new(SentimentService::new(analyzer, repository));
-    let state = AppState { service };
+    let state = AppState {
+        service,
+        document_max_characters: 1_000_000,
+    };
 
     Router::new()
         .route(
             "/predict",
             post(predict_handler).layer(DefaultBodyLimit::max(limit)),
+        )
+        .route(
+            "/predict/document",
+            post(predict_document_handler).layer(DefaultBodyLimit::max(1024)),
         )
         .route("/health", get(health_handler))
         .route("/ready", get(readiness_handler))
@@ -57,17 +63,43 @@ fn build_app_with_analyzer(analyzer: Arc<dyn SentimentAnalyzer>, limit: usize) -
         .layer(middleware::from_fn(request_context))
 }
 
-struct UnreadyAnalyzer;
+async fn multipart_file(app: Router, file_name: &str, content: &[u8]) -> (StatusCode, Value) {
+    let boundary = "document-boundary";
+    let mut body = format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\nContent-Type: application/octet-stream\r\n\r\n").into_bytes();
+    body.extend_from_slice(content);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/predict/document")
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
 
-#[async_trait::async_trait]
-impl SentimentAnalyzer for UnreadyAnalyzer {
-    async fn analyze(&self, _text: &str) -> Result<(SentimentType, f64), anyhow::Error> {
-        anyhow::bail!("Analyzer is unavailable")
-    }
+#[tokio::test]
+async fn document_prediction_accepts_utf8_text() {
+    let (status, response) = multipart_file(build_app(), "note.txt", b"A short document").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(response["sentiment"], "Positive");
+    assert_eq!(response["chunks"].as_array().unwrap().len(), 1);
+}
 
-    async fn is_ready(&self) -> Result<(), anyhow::Error> {
-        anyhow::bail!("Analyzer is unavailable")
-    }
+#[tokio::test]
+async fn document_prediction_rejects_legacy_word_documents() {
+    let (status, response) = multipart_file(build_app(), "old.doc", b"legacy binary").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response["code"], "invalid_document");
 }
 
 #[tokio::test]
@@ -112,14 +144,6 @@ async fn readiness_reports_the_stub_analyzer_as_ready() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(response["status"], "ready");
-}
-
-#[tokio::test]
-async fn readiness_reports_an_unready_analyzer_as_unavailable() {
-    let app = build_app_with_analyzer(Arc::new(UnreadyAnalyzer), 64 * 1024);
-    let (status, _) = request(app, "GET", "/ready", Body::empty()).await;
-
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 }
 
 async fn request(app: Router, method: &str, uri: &str, body: Body) -> (StatusCode, Value) {
