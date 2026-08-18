@@ -31,7 +31,7 @@ const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
 
 impl PostgresStore {
     pub fn new(config: &DbConfig) -> anyhow::Result<Self> {
-        let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new(&config.url());
+        let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new(config.url());
         let pool = Pool::builder(manager)
             .max_size(config.max_pool_size())
             .build()

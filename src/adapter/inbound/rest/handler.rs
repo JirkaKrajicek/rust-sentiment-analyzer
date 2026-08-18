@@ -1,13 +1,16 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use uuid::Uuid;
 
 use crate::{
-    adapter::inbound::rest::dto::{PredictRequest, PredictResponse, ReadinessResponse},
+    adapter::inbound::rest::{
+        dto::{ErrorResponse, HealthResponse, PredictRequest, PredictResponse, ReadinessResponse},
+        request_context::RequestId,
+    },
     app_state::AppState,
     application::port::sentiment_analyzer::InferenceError,
 };
@@ -18,34 +21,44 @@ use crate::{
     request_body = PredictRequest,
     responses(
         (status = 200, description = "Sentiment prediction result", body = PredictResponse),
-        (status = 413, description = "Request body exceeds the configured limit"),
-        (status = 422, description = "Text is empty"),
-        (status = 429, description = "Inference capacity is unavailable"),
-        (status = 504, description = "Inference timed out"),
-        (status = 500, description = "Internal server error"),
+        (status = 413, description = "Request body exceeds the configured limit", body = ErrorResponse),
+        (status = 422, description = "Text is empty", body = ErrorResponse),
+        (status = 429, description = "Inference capacity is unavailable", body = ErrorResponse),
+        (status = 504, description = "Inference timed out", body = ErrorResponse),
+        (status = 500, description = "Internal server error", body = ErrorResponse),
     ),
     tag = "sentiment"
 )]
 pub async fn predict_handler(
     State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
     Json(body): Json<PredictRequest>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<Json<PredictResponse>, ApiError> {
     if body.text.trim().is_empty() {
-        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "empty_text",
+            "Text must not be empty",
+            request_id,
+        ));
     }
     let sentiment = state
         .service
         .predict(body.text)
         .await
-        .map_err(predict_error_status)?;
+        .map_err(|error| predict_error(error, request_id.clone()))?;
 
-    let response = PredictResponse {
-        id: sentiment.prompt_id,
-        sentiment: format!("{:?}", sentiment.sentiment),
-        probability: sentiment.probability,
-    };
+    Ok(Json(to_response(sentiment)))
+}
 
-    Ok(Json(response))
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses((status = 200, description = "Service process is healthy", body = HealthResponse)),
+    tag = "sentiment"
+)]
+pub async fn health_handler() -> Json<HealthResponse> {
+    Json(HealthResponse { status: "healthy" })
 }
 
 #[utoipa::path(
@@ -53,35 +66,37 @@ pub async fn predict_handler(
     path = "/ready",
     responses(
         (status = 200, description = "Model is ready", body = ReadinessResponse),
-        (status = 503, description = "Model is not ready")
+        (status = 503, description = "Model is not ready", body = ErrorResponse)
     ),
     tag = "sentiment"
 )]
 pub async fn readiness_handler(
     State(state): State<AppState>,
-) -> Result<Json<ReadinessResponse>, StatusCode> {
+    Extension(request_id): Extension<RequestId>,
+) -> Result<Json<ReadinessResponse>, ApiError> {
     state
         .service
         .is_ready()
         .await
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        .map_err(|error| ApiError::internal(error, request_id))?;
     Ok(Json(ReadinessResponse { status: "ready" }))
 }
 
 #[utoipa::path(
     get,
     path = "/sentiments",
-    responses((status = 200, description = "Persisted sentiment predictions", body = [PredictResponse])),
+    responses((status = 200, description = "Persisted sentiment predictions", body = [PredictResponse]), (status = 500, description = "Internal server error", body = ErrorResponse)),
     tag = "sentiment"
 )]
 pub async fn list_sentiments_handler(
     State(state): State<AppState>,
-) -> Result<Json<Vec<PredictResponse>>, StatusCode> {
+    Extension(request_id): Extension<RequestId>,
+) -> Result<Json<Vec<PredictResponse>>, ApiError> {
     let sentiments = state
         .service
         .list()
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|error| ApiError::internal(error, request_id))?;
     Ok(Json(sentiments.into_iter().map(to_response).collect()))
 }
 
@@ -89,19 +104,27 @@ pub async fn list_sentiments_handler(
     get,
     path = "/sentiments/{id}",
     params(("id" = Uuid, Path, description = "Prediction identifier")),
-    responses((status = 200, description = "Persisted sentiment prediction", body = PredictResponse), (status = 404, description = "Prediction not found")),
+    responses((status = 200, description = "Persisted sentiment prediction", body = PredictResponse), (status = 404, description = "Prediction not found", body = ErrorResponse), (status = 500, description = "Internal server error", body = ErrorResponse)),
     tag = "sentiment"
 )]
 pub async fn get_sentiment_handler(
     State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
     Path(id): Path<Uuid>,
-) -> Result<Json<PredictResponse>, StatusCode> {
+) -> Result<Json<PredictResponse>, ApiError> {
     let sentiment = state
         .service
         .get(id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .map_err(|error| ApiError::internal(error, request_id.clone()))?
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "sentiment_not_found",
+                "Sentiment prediction was not found",
+                request_id,
+            )
+        })?;
     Ok(Json(to_response(sentiment)))
 }
 
@@ -109,22 +132,78 @@ pub async fn get_sentiment_handler(
     delete,
     path = "/sentiments/{id}",
     params(("id" = Uuid, Path, description = "Prediction identifier")),
-    responses((status = 204, description = "Prediction deleted"), (status = 404, description = "Prediction not found")),
+    responses((status = 204, description = "Prediction deleted"), (status = 404, description = "Prediction not found", body = ErrorResponse), (status = 500, description = "Internal server error", body = ErrorResponse)),
     tag = "sentiment"
 )]
 pub async fn delete_sentiment_handler(
     State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
     Path(id): Path<Uuid>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     let deleted = state
         .service
         .delete(id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|error| ApiError::internal(error, request_id.clone()))?;
     if deleted {
         Ok(StatusCode::NO_CONTENT)
     } else {
-        Err(StatusCode::NOT_FOUND)
+        Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "sentiment_not_found",
+            "Sentiment prediction was not found",
+            request_id,
+        ))
+    }
+}
+
+pub struct ApiError {
+    status: StatusCode,
+    code: &'static str,
+    message: &'static str,
+    request_id: RequestId,
+}
+
+impl ApiError {
+    fn new(
+        status: StatusCode,
+        code: &'static str,
+        message: &'static str,
+        request_id: RequestId,
+    ) -> Self {
+        Self {
+            status,
+            code,
+            message,
+            request_id,
+        }
+    }
+
+    fn internal(_error: anyhow::Error, request_id: RequestId) -> Self {
+        eprintln!(
+            "level=error event=internal_error request_id={}",
+            request_id.0
+        );
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "An internal error occurred",
+            request_id,
+        )
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        (
+            self.status,
+            Json(ErrorResponse {
+                code: self.code,
+                message: self.message,
+                request_id: self.request_id.0,
+            }),
+        )
+            .into_response()
     }
 }
 
@@ -136,10 +215,20 @@ fn to_response(sentiment: crate::domain::sentiment::Sentiment) -> PredictRespons
     }
 }
 
-fn predict_error_status(error: anyhow::Error) -> StatusCode {
+fn predict_error(error: anyhow::Error, request_id: RequestId) -> ApiError {
     match error.downcast_ref::<InferenceError>() {
-        Some(InferenceError::Overloaded) => StatusCode::TOO_MANY_REQUESTS,
-        Some(InferenceError::TimedOut) => StatusCode::GATEWAY_TIMEOUT,
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
+        Some(InferenceError::Overloaded) => ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "inference_overloaded",
+            "Inference capacity is unavailable",
+            request_id,
+        ),
+        Some(InferenceError::TimedOut) => ApiError::new(
+            StatusCode::GATEWAY_TIMEOUT,
+            "inference_timed_out",
+            "Inference timed out",
+            request_id,
+        ),
+        _ => ApiError::internal(error, request_id),
     }
 }

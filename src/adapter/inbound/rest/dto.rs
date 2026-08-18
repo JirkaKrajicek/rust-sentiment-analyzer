@@ -22,3 +22,15 @@ pub struct PredictResponse {
 pub struct ReadinessResponse {
     pub status: &'static str,
 }
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct HealthResponse {
+    pub status: &'static str,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ErrorResponse {
+    pub code: &'static str,
+    pub message: &'static str,
+    pub request_id: String,
+}

@@ -5,6 +5,7 @@ use axum::{
     body::Body,
     extract::DefaultBodyLimit,
     http::{Request, StatusCode},
+    middleware,
     routing::{get, post},
 };
 use http_body_util::BodyExt;
@@ -14,9 +15,10 @@ use tower::ServiceExt;
 use sentiment_analyzer::{
     adapter::{
         inbound::rest::handler::{
-            delete_sentiment_handler, get_sentiment_handler, list_sentiments_handler,
-            predict_handler, readiness_handler,
+            delete_sentiment_handler, get_sentiment_handler, health_handler,
+            list_sentiments_handler, predict_handler, readiness_handler,
         },
+        inbound::rest::request_context::request_context,
         outbound::stub::{sentiment_analyzer::StubAnalyzer, stub_repository::StubRepository},
     },
     app_state::AppState,
@@ -44,6 +46,7 @@ fn build_app_with_analyzer(analyzer: Arc<dyn SentimentAnalyzer>, limit: usize) -
             "/predict",
             post(predict_handler).layer(DefaultBodyLimit::max(limit)),
         )
+        .route("/health", get(health_handler))
         .route("/ready", get(readiness_handler))
         .route("/sentiments", get(list_sentiments_handler))
         .route(
@@ -51,6 +54,7 @@ fn build_app_with_analyzer(analyzer: Arc<dyn SentimentAnalyzer>, limit: usize) -
             get(get_sentiment_handler).delete(delete_sentiment_handler),
         )
         .with_state(state)
+        .layer(middleware::from_fn(request_context))
 }
 
 struct UnreadyAnalyzer;
@@ -68,7 +72,7 @@ impl SentimentAnalyzer for UnreadyAnalyzer {
 
 #[tokio::test]
 async fn predict_rejects_empty_text() {
-    let (status, _) = request(
+    let (status, response) = request(
         build_app(),
         "POST",
         "/predict",
@@ -77,6 +81,16 @@ async fn predict_rejects_empty_text() {
     .await;
 
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response["code"], "empty_text");
+    assert!(response["request_id"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn health_reports_the_process_as_healthy() {
+    let (status, response) = request(build_app(), "GET", "/health", Body::empty()).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(response["status"], "healthy");
 }
 
 #[tokio::test]

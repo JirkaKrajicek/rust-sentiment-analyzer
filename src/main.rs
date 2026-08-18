@@ -3,19 +3,21 @@ use std::sync::Arc;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
+    middleware,
     routing::{get, post},
 };
 use sentiment_analyzer::{
     adapter::{
         inbound::rest::handler::{
-            delete_sentiment_handler, get_sentiment_handler, list_sentiments_handler,
-            predict_handler, readiness_handler,
+            delete_sentiment_handler, get_sentiment_handler, health_handler,
+            list_sentiments_handler, predict_handler, readiness_handler,
         },
+        inbound::rest::request_context::request_context,
         outbound::{onnx::onnx_analyzer::OnnxAnalyzer, postgres::postgres_store::PostgresStore},
     },
     app_state::AppState,
     application::service::sentiment_service::SentimentService,
-    config::{DbConfig, InferenceConfig},
+    config::AppConfig,
     openapi::ApiDoc,
 };
 use utoipa::OpenApi;
@@ -24,18 +26,17 @@ use utoipa_swagger_ui::SwaggerUi;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
-    let db_config = DbConfig::from_env();
-    let inference_config = InferenceConfig::from_env()?;
-    let repo = Arc::new(PostgresStore::new(&db_config)?);
-    if db_config.run_migrations() {
+    let config = AppConfig::from_env()?;
+    let repo = Arc::new(PostgresStore::new(&config.database)?);
+    if config.database.run_migrations() {
         repo.run_migrations().await?;
     }
     let analyzer = Arc::new(OnnxAnalyzer::new(
-        std::path::Path::new("models/model.onnx"),
-        std::path::Path::new("models/tokenizer.json"),
-        inference_config.max_tokens,
-        inference_config.queue_timeout,
-        inference_config.execution_timeout,
+        &config.model.model_path,
+        &config.model.tokenizer_path,
+        config.inference.max_tokens,
+        config.inference.queue_timeout,
+        config.inference.execution_timeout,
     )?);
     let service = Arc::new(SentimentService::new(analyzer, repo));
     let state = AppState { service };
@@ -44,9 +45,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/predict",
             post(predict_handler).layer(DefaultBodyLimit::max(
-                inference_config.predict_max_body_bytes,
+                config.inference.predict_max_body_bytes,
             )),
         )
+        .route("/health", get(health_handler))
         .route("/ready", get(readiness_handler))
         .route("/sentiments", get(list_sentiments_handler))
         .route(
@@ -54,9 +56,10 @@ async fn main() -> anyhow::Result<()> {
             get(get_sentiment_handler).delete(delete_sentiment_handler),
         )
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
-        .with_state(state);
+        .with_state(state)
+        .layer(middleware::from_fn(request_context));
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
+    let listener = tokio::net::TcpListener::bind(config.server.bind_address).await?;
     axum::serve(listener, app).await?;
 
     Ok(())

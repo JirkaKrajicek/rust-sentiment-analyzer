@@ -1,8 +1,15 @@
-use std::time::Duration;
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
+
+pub struct AppConfig {
+    pub database: DbConfig,
+    pub inference: InferenceConfig,
+    pub model: ModelConfig,
+    pub server: ServerConfig,
+}
 
 pub struct DbConfig {
     url: String,
-    max_pool_size: u32,
+    max_pool_size: usize,
     run_migrations: bool,
 }
 
@@ -14,8 +21,50 @@ pub struct InferenceConfig {
     pub execution_timeout: Duration,
 }
 
-impl InferenceConfig {
+pub struct ModelConfig {
+    pub model_path: PathBuf,
+    pub tokenizer_path: PathBuf,
+}
+
+pub struct ServerConfig {
+    pub bind_address: SocketAddr,
+}
+
+impl AppConfig {
     pub fn from_env() -> anyhow::Result<Self> {
+        Ok(Self {
+            database: DbConfig::from_env()?,
+            inference: InferenceConfig::from_env()?,
+            model: ModelConfig::from_env()?,
+            server: ServerConfig::from_env()?,
+        })
+    }
+}
+
+impl DbConfig {
+    fn from_env() -> anyhow::Result<Self> {
+        Ok(Self {
+            url: required_env("DATABASE_URL")?,
+            max_pool_size: positive_usize_env("MAX_POOL_SIZE", 10)?,
+            run_migrations: boolean_env("RUN_MIGRATIONS", true)?,
+        })
+    }
+
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    pub fn max_pool_size(&self) -> usize {
+        self.max_pool_size
+    }
+
+    pub fn run_migrations(&self) -> bool {
+        self.run_migrations
+    }
+}
+
+impl InferenceConfig {
+    fn from_env() -> anyhow::Result<Self> {
         Ok(Self {
             predict_max_body_bytes: positive_usize_env("PREDICT_MAX_BODY_BYTES", 64 * 1024)?,
             max_tokens: positive_usize_env("MODEL_MAX_TOKENS", 512)?,
@@ -26,6 +75,40 @@ impl InferenceConfig {
             execution_timeout: Duration::from_millis(positive_env("INFERENCE_TIMEOUT_MS", 10_000)?),
         })
     }
+}
+
+impl ModelConfig {
+    fn from_env() -> anyhow::Result<Self> {
+        Ok(Self {
+            model_path: PathBuf::from(non_empty_env_or("MODEL_PATH", "models/model.onnx")?),
+            tokenizer_path: PathBuf::from(non_empty_env_or(
+                "TOKENIZER_PATH",
+                "models/tokenizer.json",
+            )?),
+        })
+    }
+}
+
+impl ServerConfig {
+    fn from_env() -> anyhow::Result<Self> {
+        let value = non_empty_env_or("SERVER_ADDRESS", "0.0.0.0:3000")?;
+        let bind_address = value
+            .parse()
+            .map_err(|_| anyhow::anyhow!("SERVER_ADDRESS must be a valid host:port address"))?;
+        Ok(Self { bind_address })
+    }
+}
+
+fn required_env(name: &str) -> anyhow::Result<String> {
+    std::env::var(name).map_err(|_| anyhow::anyhow!("{name} must be set"))
+}
+
+fn non_empty_env_or(name: &str, default: &str) -> anyhow::Result<String> {
+    let value = std::env::var(name).unwrap_or_else(|_| default.to_string());
+    if value.trim().is_empty() {
+        anyhow::bail!("{name} must not be empty");
+    }
+    Ok(value)
 }
 
 fn positive_usize_env(name: &str, default: usize) -> anyhow::Result<usize> {
@@ -44,33 +127,9 @@ fn positive_env(name: &str, default: u64) -> anyhow::Result<u64> {
     Ok(value)
 }
 
-impl DbConfig {
-    pub fn from_env() -> Self {
-        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-        let max_pool_size = std::env::var("MAX_POOL_SIZE")
-            .unwrap_or_else(|_| "10".to_string())
-            .parse()
-            .expect("MAX_POOL_SIZE must be a valid integer");
-        let run_migrations = std::env::var("RUN_MIGRATIONS")
-            .unwrap_or_else(|_| "true".to_string())
-            .parse()
-            .expect("RUN_MIGRATIONS must be a valid boolean");
-        Self {
-            url,
-            max_pool_size,
-            run_migrations,
-        }
-    }
-
-    pub fn url(&self) -> String {
-        self.url.clone()
-    }
-
-    pub fn max_pool_size(&self) -> usize {
-        self.max_pool_size as usize
-    }
-
-    pub fn run_migrations(&self) -> bool {
-        self.run_migrations
-    }
+fn boolean_env(name: &str, default: bool) -> anyhow::Result<bool> {
+    std::env::var(name)
+        .unwrap_or_else(|_| default.to_string())
+        .parse()
+        .map_err(|_| anyhow::anyhow!("{name} must be true or false"))
 }
