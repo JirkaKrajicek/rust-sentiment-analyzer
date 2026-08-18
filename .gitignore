@@ -23,3 +23,5 @@ target
 # models store trained llm which can be large
 # during development model.onnx file and tokenizer.json is used 
 /models
+
+.env

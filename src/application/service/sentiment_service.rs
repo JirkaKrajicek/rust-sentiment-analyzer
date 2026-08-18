@@ -35,4 +35,8 @@ impl SentimentService {
     pub async fn delete(&self, prompt_id: Uuid) -> Result<bool, anyhow::Error> {
         self.repo.delete(prompt_id).await
     }
+
+    pub async fn is_ready(&self) -> Result<(), anyhow::Error> {
+        self.analyzer.is_ready().await
+    }
 }

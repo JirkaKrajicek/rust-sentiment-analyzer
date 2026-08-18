@@ -1,0 +1,30 @@
+sequenceDiagram
+    autonumber
+    actor Client
+    participant API as Axum REST API
+    participant Handler as predict_handler
+    participant Service as SentimentService
+    participant Analyzer as SentimentAnalyzer port
+    participant ONNX as OnnxAnalyzer
+    participant Tokenizer
+    participant Model as ONNX Runtime session
+    participant Repo as ProjectRepository port
+    participant DB as PostgreSQL
+
+    Client->>API: POST /predict {"text": "..."}
+    API->>Handler: Route request
+    Handler->>Service: predict(text)
+    Service->>Analyzer: analyze(text)
+    Analyzer->>Tokenizer: encode(text, add_special_tokens=true)
+    Tokenizer-->>Analyzer: input_ids + attention_mask
+    Analyzer->>Model: Run inference
+    Model-->>Analyzer: logits [negative, positive]
+    Analyzer->>Analyzer: Softmax + classify result
+    Analyzer-->>Service: sentiment + probability
+
+    Service->>Repo: insert(text, sentiment, probability)
+    Repo->>DB: INSERT sentiment_results
+    DB-->>Repo: Persisted result ID
+    Repo-->>Service: Persisted sentiment result
+    Service-->>Handler: Sentiment result with ID
+    Handler-->>Client: 200 JSON {id, sentiment, probability}

@@ -17,3 +17,8 @@ pub struct PredictResponse {
     /// Confidence probability of the prediction
     pub probability: f64,
 }
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ReadinessResponse {
+    pub status: &'static str,
+}

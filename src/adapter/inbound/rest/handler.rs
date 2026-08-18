@@ -7,8 +7,9 @@ use axum::{
 use uuid::Uuid;
 
 use crate::{
-    adapter::inbound::rest::dto::{PredictRequest, PredictResponse},
+    adapter::inbound::rest::dto::{PredictRequest, PredictResponse, ReadinessResponse},
     app_state::AppState,
+    application::port::sentiment_analyzer::InferenceError,
 };
 
 #[utoipa::path(
@@ -17,6 +18,10 @@ use crate::{
     request_body = PredictRequest,
     responses(
         (status = 200, description = "Sentiment prediction result", body = PredictResponse),
+        (status = 413, description = "Request body exceeds the configured limit"),
+        (status = 422, description = "Text is empty"),
+        (status = 429, description = "Inference capacity is unavailable"),
+        (status = 504, description = "Inference timed out"),
         (status = 500, description = "Internal server error"),
     ),
     tag = "sentiment"
@@ -25,11 +30,14 @@ pub async fn predict_handler(
     State(state): State<AppState>,
     Json(body): Json<PredictRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
+    if body.text.trim().is_empty() {
+        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+    }
     let sentiment = state
         .service
         .predict(body.text)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(predict_error_status)?;
 
     let response = PredictResponse {
         id: sentiment.prompt_id,
@@ -38,6 +46,26 @@ pub async fn predict_handler(
     };
 
     Ok(Json(response))
+}
+
+#[utoipa::path(
+    get,
+    path = "/ready",
+    responses(
+        (status = 200, description = "Model is ready", body = ReadinessResponse),
+        (status = 503, description = "Model is not ready")
+    ),
+    tag = "sentiment"
+)]
+pub async fn readiness_handler(
+    State(state): State<AppState>,
+) -> Result<Json<ReadinessResponse>, StatusCode> {
+    state
+        .service
+        .is_ready()
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    Ok(Json(ReadinessResponse { status: "ready" }))
 }
 
 #[utoipa::path(
@@ -105,5 +133,13 @@ fn to_response(sentiment: crate::domain::sentiment::Sentiment) -> PredictRespons
         id: sentiment.prompt_id,
         sentiment: format!("{:?}", sentiment.sentiment),
         probability: sentiment.probability,
+    }
+}
+
+fn predict_error_status(error: anyhow::Error) -> StatusCode {
+    match error.downcast_ref::<InferenceError>() {
+        Some(InferenceError::Overloaded) => StatusCode::TOO_MANY_REQUESTS,
+        Some(InferenceError::TimedOut) => StatusCode::GATEWAY_TIMEOUT,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
